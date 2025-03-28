@@ -4,6 +4,6 @@ dev/
 # 忽略Mac系统文件
 .DS_Store
 
-# 忽略其他不需要版本控制的文件
-*.pdf
-*.docx
+# 允许特定文件
+# *.pdf
+# *.docx

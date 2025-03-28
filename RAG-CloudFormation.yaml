@@ -1,0 +1,823 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Metadata:
+  Generator: "former2"
+  Description: "RAG Knowledge Base Infrastructure with Self-hosted Image Server"
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances. Please ensure the key pair exists in the target region.
+
+Resources:
+
+  # VPC and Networking Resources
+
+  RAGVPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: "Name"
+          Value: "RAG-VPC"
+
+  RAGInternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: "Name"
+          Value: "RAG-IGW"
+
+  RAGVPCGatewayAttachment:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId: !Ref RAGVPC
+      InternetGatewayId: !Ref RAGInternetGateway
+
+  RAGPublicSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref RAGVPC
+      AvailabilityZone: "cn-north-1b"
+      CidrBlock: "10.0.1.0/24"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: "Name"
+          Value: "RAG-Public-Subnet"
+
+  RAGPublicRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref RAGVPC
+      Tags:
+        - Key: "Name"
+          Value: "RAG-Public-RT"
+
+  RAGPublicRoute:
+    Type: "AWS::EC2::Route"
+    DependsOn: "RAGVPCGatewayAttachment"
+    Properties:
+      RouteTableId: !Ref RAGPublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref RAGInternetGateway
+
+  RAGPublicSubnetRouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref RAGPublicSubnet
+      RouteTableId: !Ref RAGPublicRouteTable
+
+  # IAM Roles and Instance Profiles
+
+  LambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws-cn:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: "S3Access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:ListBucket"
+                Resource:
+                  - !Sub "arn:aws-cn:s3:::${S3Bucket}"
+                  - !Sub "arn:aws-cn:s3:::${S3Bucket}/*"
+        - PolicyName: "NetworkAccess" # 允许 Lambda 进行网络调用
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "ec2:CreateNetworkInterface"
+                  - "ec2:DescribeNetworkInterfaces"
+                  - "ec2:DeleteNetworkInterface"
+                Resource: "*"
+
+  DifyRAGRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      RoleName: "Dify-RAG-Role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      MaxSessionDuration: 3600
+      ManagedPolicyArns:
+        - "arn:aws-cn:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      Policies:
+        - PolicyName: "DifyRAGPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:GetObject"
+                  - "s3:ListBucket"
+                Resource:
+                  - !Sub "arn:aws-cn:s3:::${S3Bucket}"
+                  - !Sub "arn:aws-cn:s3:::${S3Bucket}/*"
+      Description: "Role for Dify RAG EC2 instance"
+
+  MinerURAGRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      RoleName: "MinerU-RAG-Role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      MaxSessionDuration: 3600
+      ManagedPolicyArns:
+        - "arn:aws-cn:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      Policies:
+        - PolicyName: "S3Access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:ListBucket"
+                Resource:
+                  - !Sub "arn:aws-cn:s3:::${S3Bucket}"
+                  - !Sub "arn:aws-cn:s3:::${S3Bucket}/*"
+      Description: "Role for MinerU RAG EC2 instance"
+
+  ImageServerRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      RoleName: "RAG-ImageServer-Role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      MaxSessionDuration: 3600
+      ManagedPolicyArns:
+        - "arn:aws-cn:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      Policies:
+        - PolicyName: "S3ImageAccess"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:GetObject"
+                  - "s3:ListBucket"
+                  - "s3:PutObject"
+                  - "s3:Sync"
+                Resource:
+                  - !Sub "arn:aws-cn:s3:::${S3Bucket}"
+                  - !Sub "arn:aws-cn:s3:::${S3Bucket}/*"
+      Description: "Role for Image Server EC2 instance"
+
+  DifyRAGInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      InstanceProfileName: "Dify-RAG-InstanceProfile"
+      Roles:
+        - !Ref DifyRAGRole
+
+  MinerURAGInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      InstanceProfileName: "MinerU-RAG-InstanceProfile"
+      Roles:
+        - !Ref MinerURAGRole
+
+  ImageServerInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      InstanceProfileName: "RAG-ImageServer-Profile"
+      Roles:
+        - !Ref ImageServerRole
+
+  # Security Groups
+
+  EC2SecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "dify-limit-ip"
+      GroupName: "dify-limit-ip"
+      VpcId: !Ref RAGVPC
+      SecurityGroupIngress:
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 22
+          IpProtocol: "tcp"
+          ToPort: 22
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 8081
+          IpProtocol: "tcp"
+          ToPort: 8081
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 80
+          IpProtocol: "tcp"
+          ToPort: 80
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "-1"
+
+  EC2SecurityGroup2:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "MinerU GPU Security Group"
+      GroupName: "minerU-security-group"
+      VpcId: !Ref RAGVPC
+      SecurityGroupIngress:
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 22
+          IpProtocol: "tcp"
+          ToPort: 22
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 5000
+          IpProtocol: "tcp"
+          ToPort: 5000
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "-1"
+
+  ImageServerSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security Group for Image Server"
+      GroupName: "image-server-sg"
+      VpcId: !Ref RAGVPC
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref EC2SecurityGroup
+          FromPort: 80
+          IpProtocol: "tcp"
+          ToPort: 80
+          Description: "Allow HTTP from Dify server"
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 22
+          IpProtocol: "tcp"
+          ToPort: 22
+          Description: "SSH access"
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "-1"
+
+  # S3 Bucket
+
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Sub "rag-knowledgebase-docs-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: "BucketOwnerEnforced"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Lambda Functions
+
+  LambdaFunction:
+    Type: "AWS::Lambda::Function"
+    DependsOn: ImageServerEC2
+    Properties:
+      Description: "处理 Markdown 文件的 Lambda 函数"
+      FunctionName: "MinerU_md_file_process"
+      Handler: "index.lambda_handler"
+      Architectures:
+        - "x86_64"
+      Environment:
+        Variables:
+          IMAGE_SERVER_IP: !GetAtt ImageServerEC2.PublicIp
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import re
+          import os
+          import urllib.parse
+          from pathlib import Path
+
+          s3_client = boto3.client('s3')
+          NGINX_DOMAIN = os.environ['IMAGE_SERVER_IP']
+
+          def lambda_handler(event, context):
+              # 获取触发事件的 S3 桶和对象键
+              bucket = event['Records'][0]['s3']['bucket']['name']
+              key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'])
+              
+              # 检查是否为 .md 文件
+              if not key.lower().endswith('.md'):
+                  print(f"跳过非 Markdown 文件: {key}")
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('非 Markdown 文件，已跳过处理')
+                  }
+              
+              try:
+                  # 从 S3 获取原始 Markdown 内容
+                  response = s3_client.get_object(Bucket=bucket, Key=key)
+                  content = response['Body'].read().decode('utf-8')
+                  
+                  # 获取文件夹路径
+                  folder_path = os.path.dirname(key)
+                  
+                  # 使用正则表达式查找并替换图片引用 - 完全替换为纯 URL
+                  pattern = r'!\[.*?\]\(images/(.*?)\)'
+                  
+                  def replace_image_url(match):
+                      # 只需要图片名称
+                      image_name = match.group(1)
+                      
+                      # 构建 URL，不需要加 output 路径，因为 Nginx 已经将 root 指向了 output 目录
+                      # 对路径进行 URL 编码，但保留斜杠
+                      encoded_path = urllib.parse.quote(folder_path, safe='/')
+                      # 移除路径中的 output/ 前缀（如果存在）
+                      if encoded_path.startswith('output/'):
+                          encoded_path = encoded_path[7:]  # 移除 'output/' 前缀
+                      cloudfront_url = f"http://{NGINX_DOMAIN}/{encoded_path}/images/{image_name}"
+                      
+                      return cloudfront_url
+                  
+                  # 应用替换
+                  modified_content = re.sub(pattern, replace_image_url, content)
+                  
+                  # 如果内容有更改，上传回 S3
+                  if content != modified_content:
+                      s3_client.put_object(
+                          Bucket=bucket,
+                          Key=key,
+                          Body=modified_content,
+                          ContentType='text/markdown'
+                      )
+                      print(f"成功更新文件: {key}")
+                  else:
+                      print(f"文件没有需要替换的图片引用: {key}")
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('处理成功')
+                  }
+              
+              except Exception as e:
+                  print(f"发生错误: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(f'处理过程中发生错误: {str(e)}')
+                  }
+      MemorySize: 128
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: "python3.10"
+      Timeout: 30
+      TracingConfig:
+        Mode: "PassThrough"
+      EphemeralStorage:
+        Size: 512
+
+  LambdaFunction2:
+    Type: "AWS::Lambda::Function"
+    DependsOn: MinerURAGEC2
+    Properties:
+      Description: "处理上传文档的 Lambda 函数"
+      FunctionName: "MinerUDocumentProcessor"
+      Handler: "index.lambda_handler"
+      Architectures:
+        - "x86_64"
+      Environment:
+        Variables:
+          MINERU_EC2_IP: !GetAtt MinerURAGEC2.PublicIp
+      Code:
+        ZipFile: |
+          import json
+          import urllib.parse
+          import boto3
+          import urllib3
+          import os
+
+          # 支持的文件扩展名列表
+          SUPPORTED_EXTENSIONS = ['.pdf', '.jpg', '.png', '.doc', '.docx', '.ppt', '.pptx']
+
+          def lambda_handler(event, context):
+              # 从事件中获取桶和键
+              bucket = event['Records'][0]['s3']['bucket']['name']
+              key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'])
+              
+              # 检查文件是否在input目录
+              if not key.startswith('input/'):
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('跳过非Input目录文件')
+                  }
+              
+              # 检查文件扩展名是否支持
+              file_extension = os.path.splitext(key)[1].lower()
+              if file_extension not in SUPPORTED_EXTENSIONS:
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps(f'跳过不支持的文件类型: {file_extension}')
+                  }
+              
+              # 调用EC2 API
+              ec2_api_url = f"http://{os.environ['MINERU_EC2_IP']}:5000/convert"
+              
+              http = urllib3.PoolManager()
+              payload = {
+                  "bucket": bucket,
+                  "key": key,
+                  "file_type": file_extension[1:]  # 去掉前面的点，传递类型
+              }
+              
+              try:
+                  response = http.request(
+                      'POST',
+                      ec2_api_url,
+                      headers={'Content-Type': 'application/json'},
+                      body=json.dumps(payload).encode('utf-8'),
+                      timeout=10.0  # 设置10秒超时
+                  )
+                  
+                  if response.status == 200:
+                      return {
+                          'statusCode': 200,
+                          'body': json.dumps(f'文件处理已成功启动: {key}')
+                      }
+                  else:
+                      return {
+                          'statusCode': 500,
+                          'body': json.dumps(f'启动文件处理失败: {response.data.decode("utf-8")}')
+                      }
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(f'调用EC2 API出错: {str(e)}')
+                  }
+      MemorySize: 128
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: "python3.10" # 修改为 python3.10，因为 python3.12 可能在中国区不可用
+      Timeout: 30
+      TracingConfig:
+        Mode: "PassThrough"
+      EphemeralStorage:
+        Size: 512
+
+  # EC2 Instances
+
+  DifyRAGEC2:
+    Type: "AWS::EC2::Instance"
+    DependsOn: [DifyRAGInstanceProfile, EC2SecurityGroup, RAGPublicSubnetRouteTableAssociation]
+    Properties:
+      ImageId: "ami-0dea1c14fcebf6c9e"
+      InstanceType: "t3a.xlarge"
+      KeyName: !Ref KeyName
+      AvailabilityZone: !GetAtt RAGPublicSubnet.AvailabilityZone
+      Tenancy: "default"
+      SubnetId: !Ref RAGPublicSubnet
+      EbsOptimized: true
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      SourceDestCheck: true
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"  # 修正: 使用正确的根卷设备名
+          Ebs:
+            Encrypted: false
+            VolumeSize: 80
+            VolumeType: "gp3"
+            DeleteOnTermination: true
+      IamInstanceProfile: !Ref DifyRAGInstanceProfile
+      Tags:
+        - Key: "Name"
+          Value: "Dify-RAG-EC2"
+        - Key: "Patch Group"
+          Value: "DEV"
+      HibernationOptions:
+        Configured: false
+      CpuOptions:
+        CoreCount: 2
+        ThreadsPerCore: 2
+      EnclaveOptions:
+        Enabled: false
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # 设置 S3 存储桶环境变量
+          echo "export S3Bucket=rag-knowledgebase-docs-${AWS::AccountId}" | sudo tee -a /etc/environment
+          source /etc/environment
+          
+          # 确保根文件系统扩展到整个卷大小
+          sudo growpart /dev/xvda 1
+          sudo xfs_growfs / || sudo resize2fs /dev/xvda1
+          
+          # 记录磁盘空间信息以便验证
+          df -h > /tmp/disk_space_after_resize.txt
+          
+          # 检测操作系统类型
+          if [ -f /etc/os-release ]; then
+            . /etc/os-release
+            OS=$NAME
+          elif type lsb_release >/dev/null 2>&1; then
+            OS=$(lsb_release -si)
+          elif [ -f /etc/lsb-release ]; then
+            . /etc/lsb-release
+            OS=$DISTRIB_ID
+          else
+            OS=$(uname -s)
+          fi
+
+          # 根据操作系统类型安装必要工具
+          if [[ "$OS" == "Ubuntu" ]]; then
+            sudo apt-get update -y
+            sudo apt-get install -y wget git
+          elif [[ "$OS" == "Amazon Linux" ]]; then
+            sudo yum update -y
+            sudo yum install -y wget git
+          else
+            echo "Unsupported operating system: $OS"
+            exit 1
+          fi
+
+          # 创建工作目录
+          cd /home/ec2-user
+          # 创建日志目录
+          mkdir -p /home/ec2-user/logs
+          
+          # 尝试从 GitHub 下载 difyinstall.sh 脚本，如果失败则从备用源下载
+          if ! wget --timeout=20 --tries=2 --waitretry=5 https://raw.githubusercontent.com/JimmySunCreater/KnowledgeBase-MinerU-Dify/main/difyinstall.sh; then
+            echo "从 GitHub 下载失败，尝试从备用源下载..."
+            if ! wget --timeout=20 https://d3d2iaoi1ibop8.cloudfront.net/difyinstall.sh; then
+              echo "从备用源下载失败，请检查网络连接或手动下载脚本。"
+              exit 1
+            fi
+          fi
+
+          # 添加执行权限
+          chmod +x difyinstall.sh
+
+          # 执行安装脚本
+          sudo bash difyinstall.sh | tee -a /home/ec2-user/logs/dify_install.log
+
+
+  MinerURAGEC2:
+    Type: "AWS::EC2::Instance"
+    DependsOn: [MinerURAGInstanceProfile, EC2SecurityGroup2, RAGPublicSubnetRouteTableAssociation]
+    Properties:
+      ImageId: "ami-0dea1c14fcebf6c9e"
+      InstanceType: "t3a.xlarge"
+      KeyName: !Ref KeyName
+      AvailabilityZone: !GetAtt RAGPublicSubnet.AvailabilityZone
+      Tenancy: "default"
+      SubnetId: !Ref RAGPublicSubnet
+      EbsOptimized: true
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup2
+      SourceDestCheck: true
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"  # 修正: 使用正确的根卷设备名
+          Ebs:
+            Encrypted: false
+            VolumeSize: 100
+            VolumeType: "gp3"
+            DeleteOnTermination: true
+      IamInstanceProfile: !Ref MinerURAGInstanceProfile
+      Tags:
+        - Key: "Patch Group"
+          Value: "DEV"
+        - Key: "Name"
+          Value: "MinerU-RAG-EC2"
+      HibernationOptions:
+        Configured: false
+      CpuOptions:
+        CoreCount: 2
+        ThreadsPerCore: 2
+      EnclaveOptions:
+        Enabled: false
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # 设置 S3 存储桶环境变量
+          echo "export S3Bucket=rag-knowledgebase-docs-${AWS::AccountId}" | sudo tee -a /etc/environment
+          source /etc/environment
+          
+          # 确保根文件系统扩展到整个卷大小
+          sudo growpart /dev/xvda 1
+          sudo xfs_growfs / || sudo resize2fs /dev/xvda1
+          
+          # 记录磁盘空间信息以便验证
+          df -h > /tmp/disk_space_after_resize.txt
+          
+          # 检测操作系统类型
+          if [ -f /etc/os-release ]; then
+            . /etc/os-release
+            OS=$NAME
+          elif type lsb_release >/dev/null 2>&1; then
+            OS=$(lsb_release -si)
+          elif [ -f /etc/lsb-release ]; then
+            . /etc/lsb-release
+            OS=$DISTRIB_ID
+          else
+            OS=$(uname -s)
+          fi
+
+          # 根据操作系统类型安装必要工具
+          if [[ "$OS" == "Ubuntu" ]]; then
+            sudo apt-get update -y
+            sudo apt-get install -y wget git
+          elif [[ "$OS" == "Amazon Linux" ]]; then
+            sudo yum update -y
+            sudo yum install -y wget git
+          else
+            echo "Unsupported operating system: $OS"
+            exit 1
+          fi
+
+          # 创建日志目录
+          sudo mkdir -p /home/ec2-user/logs
+          # 设置权限为所有人可读写
+          sudo chmod 777 /home/ec2-user/logs
+
+          # 创建日志文件
+          touch /home/ec2-user/logs/mineru_install.log
+          # 设置权限为所有人可读写
+          sudo chmod 777 /home/ec2-user/logs/mineru_install.log
+
+          # 下载MinerU安装脚本
+          cd /home/ec2-user
+          if ! wget --timeout=30 --tries=3 --waitretry=5 https://raw.githubusercontent.com/JimmySunCreater/KnowledgeBase-MinerU-Dify/main/mineruinstall.sh; then
+              echo "从GitHub下载MinerU安装脚本失败，尝试从备用源下载..." | tee -a /home/ec2-user/logs/install.log
+              if ! wget --timeout=30 --tries=3 --waitretry=5 https://d3d2iaoi1ibop8.cloudfront.net/mineruinstall.sh; then
+                  echo "从备用源下载MinerU安装脚本失败，请检查网络连接或手动下载脚本。" | tee -a /home/ec2-user/logs/install.log
+                  exit 1
+              fi
+          fi
+
+          # 添加执行权限
+          sudo chmod +x mineruinstall.sh
+
+          # 以 ec2-user 身份执行MinerU安装脚本
+          sudo -u ec2-user bash -c "export HOME=/home/ec2-user && bash mineruinstall.sh" | tee -a /home/ec2-user/logs/mineru_install.log
+
+  ImageServerEC2:
+    Type: "AWS::EC2::Instance"
+    DependsOn: [ImageServerInstanceProfile, ImageServerSecurityGroup, RAGPublicSubnetRouteTableAssociation]
+    Properties:
+      ImageId: "ami-0dea1c14fcebf6c9e"
+      InstanceType: "t3.micro"
+      KeyName: !Ref KeyName
+      AvailabilityZone: !GetAtt RAGPublicSubnet.AvailabilityZone
+      Tenancy: "default"
+      SubnetId: !Ref RAGPublicSubnet
+      EbsOptimized: true
+      SecurityGroupIds:
+        - !Ref ImageServerSecurityGroup
+      SourceDestCheck: true
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"  # 修正: 使用正确的根卷设备名
+          Ebs:
+            Encrypted: false
+            VolumeSize: 50
+            VolumeType: "gp3"
+            DeleteOnTermination: true
+      IamInstanceProfile: !Ref ImageServerInstanceProfile
+      Tags:
+        - Key: "Patch Group"
+          Value: "DEV"
+        - Key: "Name"
+          Value: "ImageServer-RAG-EC2"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # 设置 S3 存储桶环境变量
+          echo "export S3Bucket=rag-knowledgebase-docs-${AWS::AccountId}" | sudo tee -a /etc/environment
+          source /etc/environment
+          
+          # 确保根文件系统扩展到整个卷大小
+          sudo growpart /dev/xvda 1
+          sudo xfs_growfs / || sudo resize2fs /dev/xvda1
+          
+          # 记录磁盘空间信息以便验证
+          df -h > /tmp/disk_space_after_resize.txt
+          
+          # 检测操作系统类型
+          if [ -f /etc/os-release ]; then
+            . /etc/os-release
+            OS=$NAME
+          elif type lsb_release >/dev/null 2>&1; then
+            OS=$(lsb_release -si)
+          elif [ -f /etc/lsb-release ]; then
+            . /etc/lsb-release
+            OS=$DISTRIB_ID
+          else
+            OS=$(uname -s)
+          fi
+
+          # 根据操作系统类型安装必要工具
+          if [[ "$OS" == "Ubuntu" ]]; then
+            sudo apt-get update -y
+            sudo apt-get install -y nginx awscli cron
+          elif [[ "$OS" == "Amazon Linux" ]]; then
+            sudo yum update -y
+            sudo yum install -y nginx awscli cronie
+          else
+            echo "Unsupported operating system: $OS"
+            exit 1
+          fi
+          
+          # 启动并启用cron服务
+          if [[ "$OS" == "Ubuntu" ]]; then
+            sudo systemctl start cron
+            sudo systemctl enable cron
+          else
+            sudo systemctl start crond
+            sudo systemctl enable crond
+          fi
+          
+          # 启动Nginx服务并设置为开机自启
+          sudo systemctl start nginx
+          sudo systemctl enable nginx
+          
+          # 创建output目录
+          sudo mkdir -p /usr/share/nginx/html/output
+          
+          # 配置Nginx作为文件服务器
+          cat > /etc/nginx/conf.d/server.conf <<EOF
+          server {
+              listen 80;
+              server_name localhost;
+              
+              # output目录配置
+              location / {
+                  root /usr/share/nginx/html/output;
+                  autoindex on;
+                  autoindex_exact_size off;
+                  autoindex_localtime on;
+                  add_header 'Access-Control-Allow-Origin' '*';
+                  add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+                  add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization';
+              }
+          }
+          EOF
+          
+          # 创建同步脚本
+          cat > /usr/local/bin/sync-files.sh <<EOF
+          #!/bin/bash
+          # 同步output目录
+          sudo aws s3 sync s3://${S3Bucket}/output/ /usr/share/nginx/html/output/
+          
+          # 设置正确的权限
+          sudo chown -R nginx:nginx /usr/share/nginx/html/
+          sudo chmod -R 755 /usr/share/nginx/html/
+          EOF
+          
+          # 添加执行权限
+          sudo chmod +x /usr/local/bin/sync-files.sh
+          
+          # 配置定时任务同步文件
+          (crontab -l 2>/dev/null || echo "") | { cat; echo "*/5 * * * * source /etc/environment && /usr/local/bin/sync-files.sh"; } | crontab -
+          
+          # 重启Nginx以应用配置
+          sudo systemctl restart nginx
+          
+          # 首次同步
+          sudo /usr/local/bin/sync-files.sh
+
+Outputs:
+  DifyRAGEC2PublicIP:
+    Description: "Public IP of the Dify RAG EC2 instance"
+    Value: !GetAtt DifyRAGEC2.PublicIp
+  
+  MinerURAGEC2PublicIP:
+    Description: "Public IP of the MinerU RAG EC2 instance"
+    Value: !GetAtt MinerURAGEC2.PublicIp
+  
+  ImageServerEC2PublicIP:
+    Description: "Public IP of the Image Server EC2 instance"
+    Value: !GetAtt ImageServerEC2.PublicIp
