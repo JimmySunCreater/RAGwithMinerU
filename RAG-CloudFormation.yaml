@@ -682,7 +682,7 @@ Resources:
           # 添加执行权限
           sudo chmod +x mineruinstall.sh
 
-          # 以 ec2-user 身份执行MinerU安装脚本，根据操作系统执行对应代码
+          # 以 ec2-user/ubuntu 身份执行MinerU安装脚本，根据操作系统执行对应代码
           if [ -f /etc/os-release ] && grep -q "Amazon Linux" /etc/os-release; then
             sudo -u ec2-user bash -c "export HOME=/home/ec2-user && bash mineruinstall.sh" | tee -a /home/ec2-user/logs/mineru_install.log
           elif [ -f /etc/os-release ] && grep -q "Ubuntu" /etc/os-release; then

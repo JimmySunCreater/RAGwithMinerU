@@ -1,7 +1,35 @@
 #!/bin/bash
 
+# 检测操作系统类型
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_NAME=$ID
+    elif [ -f /etc/lsb-release ]; then
+        . /etc/lsb-release
+        OS_NAME=$DISTRIB_ID
+    else
+        OS_NAME=$(uname -s)
+    fi
+    echo $OS_NAME | tr '[:upper:]' '[:lower:]'
+}
+
+# 获取当前用户
+get_user_home() {
+    OS=$(detect_os)
+    if [[ "$OS" == *"ubuntu"* ]]; then
+        echo "/home/ubuntu"
+    else
+        # 默认为 Amazon Linux
+        echo "/home/ec2-user"
+    fi
+}
+
+# 设置用户主目录
+USER_HOME=$(get_user_home)
+
 # 设置日志文件
-LOG_FILE="/home/ec2-user/logs/mineru_api.log"
+LOG_FILE="$USER_HOME/logs/mineru_api.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 # 日志函数
@@ -10,7 +38,7 @@ log() {
 }
 
 # 检查必要的目录和文件
-CONDA_PATH="/home/ec2-user/miniconda"
+CONDA_PATH="$USER_HOME/miniconda"
 SERVICE_DIR="/opt/mineru_service"
 API_SCRIPT="$SERVICE_DIR/lambda_api.py"
 

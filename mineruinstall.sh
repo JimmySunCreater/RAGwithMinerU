@@ -147,6 +147,16 @@ if ! sudo wget --timeout=30 --tries=3 --waitretry=5 -O /opt/mineru_service/start
 fi
 echo "   start_mineru_api.sh 下载完成"
 
+# 修改 start_mineru_api.sh 以适配当前操作系统
+echo "8.1. 修改 start_mineru_api.sh 以适配当前操作系统..."
+if [[ "$OS_TYPE" == "ubuntu" ]]; then
+    # 替换 Ubuntu 用户路径
+    sudo sed -i "s|/home/ec2-user|/home/ubuntu|g" /opt/mineru_service/start_mineru_api.sh
+    echo "   已将 start_mineru_api.sh 中的路径从 /home/ec2-user 修改为 /home/ubuntu"
+else
+    echo "   当前为 Amazon Linux，无需修改 start_mineru_api.sh 中的路径"
+fi
+
 # 添加执行权限
 echo "9. 添加执行权限..."
 sudo chmod +x /opt/mineru_service/start_mineru_api.sh
@@ -165,6 +175,19 @@ if ! sudo wget --timeout=30 --tries=3 --waitretry=5 -O /etc/systemd/system/miner
 fi
 echo "    服务配置文件下载完成"
 
+# 修改服务文件以适配当前操作系统
+echo "11.1. 修改服务文件以适配当前操作系统..."
+if [[ "$OS_TYPE" == "ubuntu" ]]; then
+    # 替换 Ubuntu 用户和组
+    sudo sed -i "s/User=ec2-user/User=ubuntu/g" /etc/systemd/system/mineru-api.service
+    sudo sed -i "s/Group=ec2-user/Group=ubuntu/g" /etc/systemd/system/mineru-api.service
+    # 替换 ExecStart 中的路径
+    sudo sed -i "s|/home/ec2-user|/home/ubuntu|g" /etc/systemd/system/mineru-api.service
+    echo "    已将服务文件中的用户从 ec2-user 修改为 ubuntu，并更新了路径"
+else
+    echo "    当前为 Amazon Linux，无需修改服务文件中的用户和路径"
+fi
+
 # 更新服务文件以使用完整路径
 echo "12. 更新服务文件中的路径..."
 sudo sed -i "/^ExecStart=/c\ExecStart=/bin/bash -c \"source $USER_HOME/miniconda/bin/activate mineru && python3 /opt/mineru_service/lambda_api.py\"" /etc/systemd/system/mineru-api.service
@@ -172,25 +195,16 @@ sudo sed -i "/^ExecStart=/c\ExecStart=/bin/bash -c \"source $USER_HOME/miniconda
 sudo sed -i "s/User=ec2-user/User=$SUDO_USER_NAME/g" /etc/systemd/system/mineru-api.service
 echo "    服务文件更新完成"
 
-# 解决 magic-pdf 命令查找问题
-echo "12.1. 确认 magic-pdf 安装路径并更新 lambda_api.py 中的命令路径..."
+# 确认 magic-pdf 安装路径
+echo "12.1. 确认 magic-pdf 安装路径..."
 MAGIC_PDF_PATH=$(find $USER_HOME/miniconda -name "magic-pdf" | head -1)
 
 if [ -z "$MAGIC_PDF_PATH" ]; then
-    echo "    找不到 magic-pdf 可执行文件，检查是否需要修改 lambda_api.py 中的调用方式..."
-    
-    # 备份原文件
-    sudo cp /opt/mineru_service/lambda_api.py /opt/mineru_service/lambda_api.py.bak
-    
-    # 修改 lambda_api.py 使用 Python 模块直接调用而不是命令行
-    sudo sed -i "s|command = f\"/home/ec2-user/miniconda/envs/mineru/bin/magic-pdf -p {input_file} -o {output_dir} -m auto\"|try:\\n        from magic_pdf.cli import process_pdf\\n        process_pdf(input_file, output_dir=output_dir, model=\"auto\")\\n        process = None\\n        returncode = 0\\n    except Exception as e:\\n        logging.error(f\"magic-pdf执行失败: {str(e)}\")\\n        returncode = 1|g" /opt/mineru_service/lambda_api.py
-    
-    echo "    已修改 lambda_api.py 使用 Python 模块直接调用"
+    echo "    找不到 magic-pdf 可执行文件，请检查安装是否完成"
+    echo "    将使用 lambda_api.py 中的自动检测功能查找 magic-pdf"
 else
     echo "    找到 magic-pdf 路径: $MAGIC_PDF_PATH"
-    # 更新 lambda_api.py 中的路径
-    sudo sed -i "s|/home/ec2-user/miniconda/envs/mineru/bin/magic-pdf|$MAGIC_PDF_PATH|g" /opt/mineru_service/lambda_api.py
-    echo "    已更新 lambda_api.py 中的 magic-pdf 路径"
+    echo "    lambda_api.py 将自动检测并使用正确的 magic-pdf 路径"
 fi
 
 # 重新加载 systemd 配置

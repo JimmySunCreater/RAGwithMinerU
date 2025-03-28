@@ -11,18 +11,49 @@ import time
 import datetime
 import re
 import queue
+import platform
+import socket
+
+# 检测操作系统和用户
+def detect_os_and_user():
+    # 获取主机名
+    hostname = socket.gethostname()
+    
+    # 检测操作系统类型
+    if os.path.exists('/etc/os-release'):
+        with open('/etc/os-release', 'r') as f:
+            os_content = f.read().lower()
+            if 'ubuntu' in os_content:
+                os_type = 'ubuntu'
+                default_user = 'ubuntu'
+            else:
+                os_type = 'amazon_linux'
+                default_user = 'ec2-user'
+    else:
+        # 默认为 Amazon Linux
+        os_type = 'amazon_linux'
+        default_user = 'ec2-user'
+    
+    # 获取用户主目录
+    user_home = f"/home/{default_user}"
+    
+    logging.info(f"检测到操作系统: {os_type}, 用户: {default_user}, 主目录: {user_home}")
+    return os_type, default_user, user_home
+
+# 获取系统信息
+OS_TYPE, DEFAULT_USER, USER_HOME = detect_os_and_user()
 
 # 创建日志目录并设置权限
-log_dir = '/home/ec2-user/logs'
+log_dir = f'{USER_HOME}/logs'
 os.makedirs(log_dir, exist_ok=True)
-subprocess.run(['sudo', 'chown', '-R', 'ec2-user:ec2-user', log_dir], check=True)
+subprocess.run(['sudo', 'chown', '-R', f'{DEFAULT_USER}:{DEFAULT_USER}', log_dir], check=True)
 subprocess.run(['sudo', 'chmod', '755', log_dir], check=True)
 
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename='/home/ec2-user/logs/mineru_api.log',
+    filename=f'{USER_HOME}/logs/mineru_api.log',
     filemode='a'
 )
 logger = logging.getLogger(__name__)
@@ -70,7 +101,7 @@ def process_file_in_mineru_env(input_bucket, input_key, file_type):
         os.makedirs(temp_dir, exist_ok=True)
 
         # 创建日志目录
-        logs_dir = '/home/ec2-user/logs/mineru_pdf_logs'
+        logs_dir = f'{USER_HOME}/logs/mineru_pdf_logs'
         os.makedirs(logs_dir, exist_ok=True)
         log_file = os.path.join(logs_dir, f"magic_pdf_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
@@ -88,8 +119,24 @@ def process_file_in_mineru_env(input_bucket, input_key, file_type):
         output_dir = os.path.join(temp_dir, "output")
         os.makedirs(output_dir, exist_ok=True)
 
+        # 查找 magic-pdf 可执行文件
+        magic_pdf_path = None
+        for root, dirs, files in os.walk(f"{USER_HOME}/miniconda"):
+            for file in files:
+                if file == "magic-pdf":
+                    magic_pdf_path = os.path.join(root, file)
+                    break
+            if magic_pdf_path:
+                break
+        
+        if not magic_pdf_path:
+            logger.error("找不到 magic-pdf 可执行文件")
+            return False
+        
+        logger.info(f"找到 magic-pdf 路径: {magic_pdf_path}")
+        
         # 使用完整路径执行 magic-pdf 命令
-        magic_pdf_cmd = ["/home/ec2-user/miniconda/envs/mineru/bin/magic-pdf", "-p", local_file_path, "-o", output_dir, "-m", "auto"]
+        magic_pdf_cmd = [magic_pdf_path, "-p", local_file_path, "-o", output_dir, "-m", "auto"]
         
         # 执行命令
         full_cmd = ' '.join(magic_pdf_cmd)
@@ -196,7 +243,7 @@ def process_file_in_mineru_env(input_bucket, input_key, file_type):
         if temp_dir and os.path.exists(temp_dir):
             try:
                 # 修改临时目录及其所有文件的权限
-                subprocess.run(['sudo', 'chown', '-R', 'ec2-user:ec2-user', temp_dir], check=True)
+                subprocess.run(['sudo', 'chown', '-R', f'{DEFAULT_USER}:{DEFAULT_USER}', temp_dir], check=True)
                 shutil.rmtree(temp_dir)
                 logger.info("临时文件已清理")
             except Exception as e:
@@ -246,7 +293,12 @@ def index():
             "convert": "/convert (POST)",
             "health": "/health (GET)"
         },
-        "queue_size": request_queue.qsize()
+        "queue_size": request_queue.qsize(),
+        "system_info": {
+            "os_type": OS_TYPE,
+            "user": DEFAULT_USER,
+            "home_dir": USER_HOME
+        }
     })
 
 @app.route('/convert', methods=['POST'])
@@ -280,7 +332,15 @@ def convert_file():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({"status": "healthy", "message": "服务运行正常"})
+    return jsonify({
+        "status": "healthy", 
+        "message": "服务运行正常",
+        "system_info": {
+            "os_type": OS_TYPE,
+            "user": DEFAULT_USER,
+            "home_dir": USER_HOME
+        }
+    })
 
 if __name__ == '__main__':
     # 启动队列工作线程
