@@ -133,7 +133,7 @@ echo "   目录创建完成"
 
 # 下载 lambda_api.py 到目标目录
 echo "7. 下载 lambda_api.py..."
-if ! sudo wget --timeout=30 --tries=3 --waitretry=5 -O /opt/mineru_service/lambda_api.py https://raw.githubusercontent.com/JimmySunCreater/KnowledgeBase-MinerU-Dify/main/lambda_api.py; then
+if ! sudo wget --timeout=30 --tries=3 --waitretry=5 -O /opt/mineru_service/lambda_api.py https://raw.githubusercontent.com/JimmySunCreater/RAGwithMinerU/main/lambda_api.py; then
     echo "   从 GitHub 下载失败，尝试从备用源下载..."
     sudo wget --timeout=30 --tries=3 --waitretry=5 -O /opt/mineru_service/lambda_api.py https://d3d2iaoi1ibop8.cloudfront.net/lambda_api.py
 fi
@@ -141,7 +141,7 @@ echo "   lambda_api.py 下载完成"
 
 # 下载 start_mineru_api.sh 到目标目录
 echo "8. 下载 start_mineru_api.sh..."
-if ! sudo wget --timeout=30 --tries=3 --waitretry=5 -O /opt/mineru_service/start_mineru_api.sh https://raw.githubusercontent.com/JimmySunCreater/KnowledgeBase-MinerU-Dify/main/start_mineru_api.sh; then
+if ! sudo wget --timeout=30 --tries=3 --waitretry=5 -O /opt/mineru_service/start_mineru_api.sh https://raw.githubusercontent.com/JimmySunCreater/RAGwithMinerU/main/start_mineru_api.sh; then
     echo "   从 GitHub 下载失败，尝试从备用源下载..."
     sudo wget --timeout=30 --tries=3 --waitretry=5 -O /opt/mineru_service/start_mineru_api.sh https://d3d2iaoi1ibop8.cloudfront.net/start_mineru_api.sh
 fi
@@ -169,7 +169,7 @@ echo "    启动脚本更新完成"
 
 # 下载服务配置文件
 echo "11. 下载服务配置文件..."
-if ! sudo wget --timeout=30 --tries=3 --waitretry=5 -O /etc/systemd/system/mineru-api.service https://raw.githubusercontent.com/JimmySunCreater/KnowledgeBase-MinerU-Dify/main/mineru-api.service; then
+if ! sudo wget --timeout=30 --tries=3 --waitretry=5 -O /etc/systemd/system/mineru-api.service https://raw.githubusercontent.com/JimmySunCreater/RAGwithMinerU/main/mineru-api.service; then
     echo "    从 GitHub 下载失败，尝试从备用源下载..."
     sudo wget --timeout=30 --tries=3 --waitretry=5 -O /etc/systemd/system/mineru-api.service https://d3d2iaoi1ibop8.cloudfront.net/mineru-api.service
 fi
