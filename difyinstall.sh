@@ -56,7 +56,7 @@ install_base_ubuntu() {
     print_step "更新系统并安装基础工具"
     print_info "使用 Ubuntu 安装方式"
     sudo apt update
-    sudo apt install -y apt-transport-https ca-certificates curl software-properties-common git wget
+    sudo apt install -y apt-transport-https ca-certificates curl software-properties-common git wget unzip
 }
 
 # 添加GitHub520 hosts以改善GitHub访问
