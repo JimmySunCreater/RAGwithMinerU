@@ -36,8 +36,6 @@ def detect_os_and_user():
     
     # 获取用户主目录
     user_home = f"/home/{default_user}"
-    
-    logging.info(f"检测到操作系统: {os_type}, 用户: {default_user}, 主目录: {user_home}")
     return os_type, default_user, user_home
 
 # 获取系统信息
@@ -49,21 +47,25 @@ os.makedirs(log_dir, exist_ok=True)
 subprocess.run(['sudo', 'chown', '-R', f'{DEFAULT_USER}:{DEFAULT_USER}', log_dir], check=True)
 subprocess.run(['sudo', 'chmod', '755', log_dir], check=True)
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename=f'{USER_HOME}/logs/mineru_api.log',
-    filemode='a'
-)
+# 创建日志记录器
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# 创建文件处理器
+file_handler = logging.FileHandler(f'{USER_HOME}/logs/mineru_api.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
 
 # 添加控制台处理器
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-console_handler.setFormatter(formatter)
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 logger.addHandler(console_handler)
+
+# 打印启动消息
+logger.info("===============================================")
+logger.info("MinerU PDF处理服务启动")
+logger.info(f"操作系统: {OS_TYPE}, 用户: {DEFAULT_USER}, 主目录: {USER_HOME}")
+logger.info("===============================================")
 
 app = Flask(__name__)
 # 创建一个队列
@@ -72,6 +74,7 @@ request_queue = queue.Queue()
 @app.errorhandler(404)
 def not_found_error(error):
     """处理404错误"""
+    logger.warning(f"404错误: {request.path}")
     return jsonify({
         "status": "error",
         "message": "请求的资源不存在",
@@ -81,6 +84,7 @@ def not_found_error(error):
 @app.errorhandler(400)
 def bad_request_error(error):
     """处理400错误"""
+    logger.warning(f"400错误: {request.path}")
     return jsonify({
         "status": "error",
         "message": "无效的请求",
@@ -251,6 +255,7 @@ def process_file_in_mineru_env(input_bucket, input_key, file_type):
 
 def queue_worker():
     """队列工作线程，处理队列中的文件转换请求"""
+    logger.info("队列工作线程已启动")
     while True:
         try:
             # 从队列中获取任务
@@ -285,6 +290,7 @@ def queue_worker():
 @app.route('/')
 def index():
     """根路径返回服务状态信息"""
+    logger.info("访问根路径")
     return jsonify({
         "status": "running",
         "service": "MinerU PDF Processing Service",
@@ -307,6 +313,7 @@ def convert_file():
     try:
         data = request.json
         if not data:
+            logger.warning("收到无效请求: 缺少JSON请求体")
             return jsonify({"status": "error", "message": "缺少JSON请求体"}), 400
 
         input_bucket = data.get('bucket')
@@ -314,16 +321,19 @@ def convert_file():
         file_type = data.get('file_type', 'pdf')
 
         if not input_bucket or not input_key:
+            logger.warning(f"收到无效请求: 缺少必要参数, bucket={input_bucket}, key={input_key}")
             return jsonify({"status": "error", "message": "缺少必要参数"}), 400
 
-        logger.info(f"收到转换请求: {input_key} (类型: {file_type})")
+        logger.info(f"收到转换请求: bucket={input_bucket}, key={input_key} (类型: {file_type})")
 
         # 将请求放入队列
         request_queue.put((input_bucket, input_key, file_type))
+        logger.info(f"请求已加入队列: {input_key}, 当前队列长度: {request_queue.qsize()}")
 
         return jsonify({
             "status": "queued",
-            "message": f"请求 {input_key} 已加入队列等待处理"
+            "message": f"请求 {input_key} 已加入队列等待处理",
+            "queue_size": request_queue.qsize()
         })
     except Exception as e:
         logger.error(f"处理请求失败: {str(e)}")
@@ -332,6 +342,7 @@ def convert_file():
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    logger.info("健康检查")
     return jsonify({
         "status": "healthy", 
         "message": "服务运行正常",
@@ -339,11 +350,19 @@ def health_check():
             "os_type": OS_TYPE,
             "user": DEFAULT_USER,
             "home_dir": USER_HOME
+        },
+        "queue_info": {
+            "current_size": request_queue.qsize()
         }
     })
 
 if __name__ == '__main__':
-    # 启动队列工作线程
-    worker_thread = threading.Thread(target=queue_worker, daemon=True)
-    worker_thread.start()
-    app.run(host='0.0.0.0', port=5000)
+    try:
+        # 启动队列工作线程
+        worker_thread = threading.Thread(target=queue_worker, daemon=True)
+        worker_thread.start()
+        logger.info("MinerU PDF处理服务启动完成，开始监听请求")
+        app.run(host='0.0.0.0', port=5000)
+    except Exception as e:
+        logger.critical(f"服务启动失败: {str(e)}")
+        logger.critical(traceback.format_exc())

@@ -101,7 +101,7 @@ install_docker_ubuntu() {
 # 安装Docker Compose
 install_docker_compose() {
     print_step "安装Docker Compose"
-    sudo curl -L "https://d3d2iaoi1ibop8.cloudfront.net/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+    sudo curl -L "https://d3d2iaoi1ibop8.cloudfront.net/RAGwithMinerU/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
     sudo chmod +x /usr/local/bin/docker-compose
     sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
 
@@ -195,7 +195,7 @@ install_dify() {
         
         # 下载zip文件
         print_info "从备用源下载Dify..."
-        if wget https://d3d2iaoi1ibop8.cloudfront.net/dify-main.zip && [ -f "dify-main.zip" ]; then
+        if wget https://d3d2iaoi1ibop8.cloudfront.net/RAGwithMinerU/dify-main.zip && [ -f "dify-main.zip" ]; then
             print_info "下载成功，正在解压..."
             if unzip dify-main.zip && [ -d "dify-main" ]; then
                 mv dify-main dify

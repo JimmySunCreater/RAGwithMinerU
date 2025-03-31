@@ -545,7 +545,7 @@ Resources:
           # 尝试从 GitHub 下载 difyinstall.sh 脚本，如果失败则从备用源下载
           if ! wget --timeout=20 --tries=2 --waitretry=5 https://raw.githubusercontent.com/JimmySunCreater/RAGwithMinerU/main/difyinstall.sh; then
             echo "从 GitHub 下载失败，尝试从备用源下载..."
-            if ! wget --timeout=20 https://d3d2iaoi1ibop8.cloudfront.net/difyinstall.sh; then
+            if ! wget --timeout=20 https://d3d2iaoi1ibop8.cloudfront.net/RAGwithMinerU/difyinstall.sh; then
               echo "从备用源下载失败，请检查网络连接或手动下载脚本。"
               exit 1
             fi
@@ -617,7 +617,7 @@ Resources:
           cd /home/ubuntu
           if ! wget --timeout=30 --tries=3 --waitretry=5 https://raw.githubusercontent.com/JimmySunCreater/RAGwithMinerU/main/mineruinstall.sh; then
               echo "从GitHub下载MinerU安装脚本失败，尝试从备用源下载..." | tee -a /home/ubuntu/logs/install.log
-              if ! wget --timeout=30 --tries=3 --waitretry=5 https://d3d2iaoi1ibop8.cloudfront.net/mineruinstall.sh; then
+              if ! wget --timeout=30 --tries=3 --waitretry=5 https://d3d2iaoi1ibop8.cloudfront.net/RAGwithMinerU/mineruinstall.sh; then
                   echo "从备用源下载MinerU安装脚本失败，请检查网络连接或手动下载脚本。" | tee -a /home/ubuntu/logs/install.log
                   exit 1
               fi
@@ -665,7 +665,7 @@ Resources:
           
           # 安装必要工具 (Ubuntu)
           sudo apt-get update -y
-          sudo apt-get install -y wget git unzip
+          sudo apt-get install -y wget git unzip nginx awscli
           
           # 启动并启用cron服务
           sudo systemctl start cron
@@ -701,10 +701,10 @@ Resources:
           cat > /usr/local/bin/sync-files.sh <<EOF
           #!/bin/bash
           # 同步output目录
-          sudo aws s3 sync s3://${S3Bucket}/output/ /usr/share/nginx/html/output/
+          sudo aws s3 sync s3://${S3Bucket}/output/ /usr/share/nginx/html/output/ --region cn-north-1
           
           # 设置正确的权限
-          sudo chown -R nginx:nginx /usr/share/nginx/html/
+          sudo chown -R www-data:www-data /usr/share/nginx/html/
           sudo chmod -R 755 /usr/share/nginx/html/
           EOF
           
